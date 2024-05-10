@@ -1,0 +1,198 @@
+#include "stm32f0xx.h"
+
+#define KEY1 0x1b1a1918
+#define KEY2 0x13121110
+#define KEY3 0x0b0a0908
+#define KEY4 0x03020100
+
+#define IWDG_START          0xCCCC
+#define IWDG_WRITE_ACCESS   0x5555
+#define IWDG_REFRESH        0xAAAA
+#define APPLICATION_ADDRESS 0x08000400
+#define app ((volatile uint32_t *)(APPLICATION_ADDRESS))
+#define vec ((volatile uint32_t *)(SRAM_BASE))
+
+union{
+    uint8_t p[1024];
+    uint16_t p16[512];
+    uint32_t p32[256];
+} page;
+uint32_t l[29];
+uint32_t k[27];
+
+// Очистка сектора(1КБ) - 14 слов
+__STATIC_FORCEINLINE
+void flashSectorClear(uint32_t adr){
+    FLASH->CR = FLASH_CR_PER;
+    FLASH->AR = adr;
+    FLASH->CR = FLASH_CR_PER | FLASH_CR_STRT;
+    while ((FLASH->SR & FLASH_SR_BSY) != 0);
+}
+
+// Запись 2 байт данных(связанно с организацией flash) по адресу - 10 слов
+void flashWrite(uint32_t adr, uint16_t data){
+    FLASH->CR = FLASH_CR_PG;
+    *(__IO uint16_t*)(adr) = data;
+    while ((FLASH->SR & FLASH_SR_BSY) != 0);
+}
+
+// Чтение данных из UART1 - 18 слов
+uint16_t uartRead(void){
+    for(int i = 0; i < 0x1000; i++){
+        if(USART1->ISR & USART_ISR_RXNE) return USART1->RDR;
+    }
+    return 0x100;
+}
+
+// Запись данных в UART1 - 10 слов
+void uartWrite(uint8_t d){
+    while(!(USART1->ISR & USART_ISR_TXE));
+    USART1->TDR = d;
+}
+
+// Расшифровка алгоритмом Speck_64_128 - 22 слова
+void speck_decrypt(uint32_t k[], uint32_t *px, uint32_t *py){
+    uint32_t x = *px;
+    uint32_t y = *py;
+    for (int i = 26; i >= 0; i--) {
+        y ^= x;
+        y = y>>3 | y<<29;
+        x ^= k[i];
+        x -= y;
+        x = x<<8 | x>>24;
+    }
+    *px = x;
+    *py = y;
+}
+
+// Чтение страницы из UART1 - 26 слов
+__STATIC_FORCEINLINE
+uint16_t uartPageRead(void){
+    uint16_t crc = 211;
+    for(int i = 0; i < 1024; i++){
+        uint16_t c = uartRead();
+        if(c == 0x100) return 0x100;
+        page.p[i] = c;
+        crc += c * 211;
+        crc ^= crc>>8;
+    }
+    return crc & 0xFF;
+}
+
+// Самообновление загрузчика - 50 слов + 8 слов вызов
+__attribute__ ((section(".RamFunc"))) __NO_RETURN
+void bootloaderSelfUpdate(void){
+    FLASH->CR = FLASH_CR_PER;
+    FLASH->AR = 0x08000000;
+    FLASH->CR = FLASH_CR_PER | FLASH_CR_STRT;
+    while ((FLASH->SR & FLASH_SR_BSY) != 0);
+    USART1->TDR = 0xAA;
+    for(int i = 0; i < 512; i++){
+        FLASH->CR = FLASH_CR_PG;
+        *(__IO uint16_t*)(0x08000000 + i * 2) = page.p16[i];
+        while ((FLASH->SR & FLASH_SR_BSY) != 0);
+    }
+    SCB->AIRCR  = ((0x5FAUL << SCB_AIRCR_VECTKEY_Pos) | SCB_AIRCR_SYSRESETREQ_Msk);
+    __builtin_unreachable();
+}
+
+// Переход в приложение - 58 слов
+__STATIC_FORCEINLINE __NO_RETURN
+void goApp(){
+    FLASH->SR = FLASH_SR_EOP;
+    FLASH->CR = FLASH_CR_LOCK;
+
+    RCC->APB2RSTR = RCC_APB2RSTR_USART1RST;
+    RCC->AHBRSTR = RCC_AHBRSTR_GPIOARST;
+    RCC->APB2RSTR = 0;
+    RCC->AHBRSTR = 0;
+    RCC->AHBENR = 0x00000014;
+    RCC->APB2ENR = 0;
+
+    for (int i = 0; i < 48; i++)
+        vec[i] = app[i];
+
+    SYSCFG->CFGR1 = SYSCFG_CFGR1_MEM_MODE;
+
+    IWDG->KR = IWDG_REFRESH;
+
+    asm volatile(
+        "msr msp, %[sp]   \n\t"
+        "bx	%[pc]         \n\t"
+        :: [sp] "r" (app[0]), [pc] "r" (app[1])
+    );
+
+    __builtin_unreachable();
+}
+
+int main(){
+    RCC->AHBENR |= RCC_AHBENR_GPIOAEN;
+    RCC->APB2ENR = RCC_APB2ENR_USART1EN;
+
+    GPIOA->MODER |= GPIO_MODER_MODER12_1 | GPIO_MODER_MODER10_1 | GPIO_MODER_MODER9_1;
+    GPIOA->AFR[1] = 0x00010110;
+
+    USART1->BRR = F_CPU / 115200;
+    USART1->CR3 = USART_CR3_DEM;
+    USART1->CR1 = USART_CR1_DEAT_Msk | USART_CR1_DEDT_Msk | USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
+
+    IWDG->KR = IWDG_START;
+    IWDG->KR = IWDG_WRITE_ACCESS;
+    IWDG->PR = IWDG_PR_PR_2;
+    IWDG->RLR = 625 - 1;
+    IWDG->KR = IWDG_REFRESH;
+
+    FLASH->KEYR = FLASH_KEY1;
+    FLASH->KEYR = FLASH_KEY2;
+
+    l[2] = KEY1;
+    l[1] = KEY2;
+    l[0] = KEY3;
+    k[0] = KEY4;
+    for (int i = 0; i < 26; i++) {
+        l[i+3] = (k[i] + (l[i]>>8 | l[i]<<24)) ^ i;
+        k[i+1] = (k[i]<<3 | k[i]>>29) ^ l[i+3];
+    }
+
+    uartWrite(0xFE);
+    uartWrite(0xE1);
+    uartWrite(0xDE);
+    uartWrite(0xAD);
+
+    for(int i = 0; i < 10; i++){
+        IWDG->KR = IWDG_REFRESH;
+        uint16_t c = uartRead();
+        if(c != 0xDE) continue;
+        c = uartRead();
+        if(c != 0xAD) continue;
+        c = uartRead();
+        if(c == 0x00){
+            const char* str = "Zerg17 Bootloader v1.0\r\n";
+            while(*str) uartWrite(*str++);
+            continue;
+        }
+        if(c != 0xBE) continue;
+        c = uartRead();
+        if(c != 0xEF) continue;
+        uint16_t p = uartRead();
+        if((p == 0x100 || !(p & 0x7F) || (p & 0x7F) >= PAGES) && ((p & 0x7F) != 127)) continue;
+        uint16_t crc = uartRead();
+        if(crc == 0x100) continue;
+        if(uartPageRead() != crc) continue;
+        if(p & 0x80){
+            for(int i = 0; i < 256; i+=2)
+                speck_decrypt(k, &(page.p32[i]), &(page.p32[i+1]));
+            p &= 0x7F;
+        }
+        if(p == 127){
+            bootloaderSelfUpdate();
+        }else{
+            flashSectorClear(0x08000000 + p * 1024);
+            for(int i = 0; i < 512; i++) flashWrite(0x08000000 + p * 1024 + i * 2, page.p16[i]);
+        }
+        i = 0;
+        USART1->TDR = 0xAA;
+    }
+
+    goApp();
+}

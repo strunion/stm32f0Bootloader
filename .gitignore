@@ -1,0 +1,14 @@
+#exclude every file with no extension
+*
+!/**/
+!*.*
+
+#exclude . dirs and files
+.*
+data/*
+data
+*.o
+
+#files and folders we do not want to ignore
+!.gitignore
+!.github
