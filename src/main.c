@@ -21,7 +21,7 @@ union{
     uint32_t p32[256];
 } page;
 uint32_t l[29];
-uint32_t k[27];
+uint32_t key[27];
 
 // Очистка сектора(1КБ) - 14 слов
 __STATIC_FORCEINLINE
@@ -86,13 +86,13 @@ uint16_t uartPageRead(void){
 __attribute__ ((section(".RamFunc"))) __NO_RETURN
 void bootloaderSelfUpdate(void){
     FLASH->CR = FLASH_CR_PER;
-    FLASH->AR = 0x08000000;
+    FLASH->AR = FLASH_BASE;
     FLASH->CR = FLASH_CR_PER | FLASH_CR_STRT;
     while ((FLASH->SR & FLASH_SR_BSY) != 0);
     USART1->TDR = 0xAA;
     for(int i = 0; i < 512; i++){
         FLASH->CR = FLASH_CR_PG;
-        *(__IO uint16_t*)(0x08000000 + i * 2) = page.p16[i];
+        *(__IO uint16_t*)(FLASH_BASE + i * 2) = page.p16[i];
         while ((FLASH->SR & FLASH_SR_BSY) != 0);
     }
     SCB->AIRCR  = ((0x5FAUL << SCB_AIRCR_VECTKEY_Pos) | SCB_AIRCR_SYSRESETREQ_Msk);
@@ -151,10 +151,10 @@ int main(){
     l[2] = KEY1;
     l[1] = KEY2;
     l[0] = KEY3;
-    k[0] = KEY4;
+    key[0] = KEY4;
     for (int i = 0; i < 26; i++) {
-        l[i+3] = (k[i] + (l[i]>>8 | l[i]<<24)) ^ i;
-        k[i+1] = (k[i]<<3 | k[i]>>29) ^ l[i+3];
+        l[i+3] = (key[i] + (l[i]>>8 | l[i]<<24)) ^ i;
+        key[i+1] = (key[i]<<3 | key[i]>>29) ^ l[i+3];
     }
 
     uartWrite(0xFE);
@@ -162,12 +162,15 @@ int main(){
     uartWrite(0xDE);
     uartWrite(0xAD);
 
-    for(int i = 0; i < 10; i++){
+    for(int count = 0; count < 10; count++){
         IWDG->KR = IWDG_REFRESH;
+
         uint16_t c = uartRead();
         if(c != 0xDE) continue;
+
         c = uartRead();
         if(c != 0xAD) continue;
+
         c = uartRead();
         if(c == 0x00){
             const char* str = "Zerg17 Bootloader v1.0\r\n";
@@ -175,26 +178,34 @@ int main(){
             continue;
         }
         if(c != 0xBE) continue;
+
         c = uartRead();
         if(c != 0xEF) continue;
-        uint16_t p = uartRead();
-        if((p == 0x100 || !(p & 0x7F) || (p & 0x7F) >= PAGES) && ((p & 0x7F) != 127)) continue;
+
+        uint32_t pageCtx = uartRead();
+        if((pageCtx == 0x100 || !(pageCtx & 0x7F) || (pageCtx & 0x7F) >= PAGES) && ((pageCtx & 0x7F) != 127)) continue;
+
         uint16_t crc = uartRead();
         if(crc == 0x100) continue;
+
         if(uartPageRead() != crc) continue;
-        if(p & 0x80){
+
+        if(pageCtx & 0x80){
             for(int i = 0; i < 256; i+=2)
-                speck_decrypt(k, &(page.p32[i]));
-            p &= 0x7F;
+                speck_decrypt(key, &(page.p32[i]));
+            pageCtx &= 0x7F;
         }
-        if(p == 127){
+
+        if(pageCtx == 127){
             bootloaderSelfUpdate();
         }else{
-            flashSectorClear(0x08000000 + p * 1024);
-            for(int i = 0; i < 512; i++) flashWrite(0x08000000 + p * 1024 + i * 2, page.p16[i]);
+            flashSectorClear(FLASH_BASE + pageCtx * 1024);
+            for(uint32_t i = 0; i < 512; i++)
+                flashWrite(FLASH_BASE + pageCtx * 1024 + i * 2, page.p16[i]);
         }
-        i = 0;
-        USART1->TDR = 0xAA;
+
+        count = 0;
+        USART1->TDR = 0xAA; // Отправка ACK
     }
 
     goApp();
