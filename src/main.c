@@ -6,6 +6,7 @@
 #define KEY4 0x03020100
 
 #define BAUDRATE 115200
+#define RS485 1
 
 #define IWDG_START          0xCCCC
 #define IWDG_WRITE_ACCESS   0x5555
@@ -20,6 +21,7 @@ union{
     uint16_t p16[512];
     uint32_t p32[256];
 } page;
+
 uint32_t l[29];
 uint32_t key[27];
 
@@ -133,12 +135,20 @@ int main(){
     RCC->AHBENR = RCC_AHBENR_GPIOAEN;
     RCC->APB2ENR = RCC_APB2ENR_USART1EN;
 
-    GPIOA->MODER = GPIO_MODER_MODER12_1 | GPIO_MODER_MODER10_1 | GPIO_MODER_MODER9_1;
-    GPIOA->AFR[1] = 0x00010110;
+    #if RS485 == 1
+        GPIOA->MODER = GPIO_MODER_MODER12_1 | GPIO_MODER_MODER10_1 | GPIO_MODER_MODER9_1;
+        GPIOA->AFR[1] = 0x00010110;
 
-    USART1->BRR = F_CPU / BAUDRATE;
-    USART1->CR3 = USART_CR3_DEM;
-    USART1->CR1 = USART_CR1_DEAT_Msk | USART_CR1_DEDT_Msk | USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
+        USART1->BRR = F_CPU / BAUDRATE;
+        USART1->CR3 = USART_CR3_DEM;
+        USART1->CR1 = USART_CR1_DEAT_Msk | USART_CR1_DEDT_Msk | USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
+    #else
+        GPIOA->MODER = GPIO_MODER_MODER10_1 | GPIO_MODER_MODER9_1;
+        GPIOA->AFR[1] = 0x00000110;
+
+        USART1->BRR = F_CPU / BAUDRATE;
+        USART1->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
+    #endif
 
     IWDG->KR = IWDG_START;
     IWDG->KR = IWDG_WRITE_ACCESS;
@@ -206,7 +216,7 @@ int main(){
         }
 
         count = 0;
-        USART1->TDR = 0xAA; // Отправка ACK
+        uartWrite(0xAA); // Отправка ACK
     }
 
     goApp();
