@@ -33,6 +33,7 @@ void flashSectorClear(uint32_t adr){
 }
 
 // Запись 2 байт данных(связанно с организацией flash) по адресу - 10 слов
+__STATIC_FORCEINLINE
 void flashWrite(uint32_t adr, uint16_t data){
     FLASH->CR = FLASH_CR_PG;
     *(__IO uint16_t*)(adr) = data;
