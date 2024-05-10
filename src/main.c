@@ -5,10 +5,13 @@
 #define KEY3 0x0b0a0908
 #define KEY4 0x03020100
 
+#define BAUDRATE 115200
+
 #define IWDG_START          0xCCCC
 #define IWDG_WRITE_ACCESS   0x5555
 #define IWDG_REFRESH        0xAAAA
 #define APPLICATION_ADDRESS 0x08000400
+
 #define app ((volatile uint32_t *)(APPLICATION_ADDRESS))
 #define vec ((volatile uint32_t *)(SRAM_BASE))
 
@@ -50,10 +53,10 @@ void uartWrite(uint8_t d){
     USART1->TDR = d;
 }
 
-// Расшифровка алгоритмом Speck_64_128 - 22 слова
-void speck_decrypt(uint32_t k[], uint32_t *px, uint32_t *py){
-    uint32_t x = *px;
-    uint32_t y = *py;
+// Расшифровка алгоритмом Speck_64_128 - 20 слов
+void speck_decrypt(uint32_t k[], uint32_t p[2]){
+    uint32_t x = p[0];
+    uint32_t y = p[1];
     for (int i = 26; i >= 0; i--) {
         y ^= x;
         y = y>>3 | y<<29;
@@ -61,8 +64,8 @@ void speck_decrypt(uint32_t k[], uint32_t *px, uint32_t *py){
         x -= y;
         x = x<<8 | x>>24;
     }
-    *px = x;
-    *py = y;
+    p[0] = x;
+    p[1] = y;
 }
 
 // Чтение страницы из UART1 - 26 слов
@@ -126,13 +129,13 @@ void goApp(){
 }
 
 int main(){
-    RCC->AHBENR |= RCC_AHBENR_GPIOAEN;
+    RCC->AHBENR = RCC_AHBENR_GPIOAEN;
     RCC->APB2ENR = RCC_APB2ENR_USART1EN;
 
-    GPIOA->MODER |= GPIO_MODER_MODER12_1 | GPIO_MODER_MODER10_1 | GPIO_MODER_MODER9_1;
+    GPIOA->MODER = GPIO_MODER_MODER12_1 | GPIO_MODER_MODER10_1 | GPIO_MODER_MODER9_1;
     GPIOA->AFR[1] = 0x00010110;
 
-    USART1->BRR = F_CPU / 115200;
+    USART1->BRR = F_CPU / BAUDRATE;
     USART1->CR3 = USART_CR3_DEM;
     USART1->CR1 = USART_CR1_DEAT_Msk | USART_CR1_DEDT_Msk | USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
 
@@ -181,7 +184,7 @@ int main(){
         if(uartPageRead() != crc) continue;
         if(p & 0x80){
             for(int i = 0; i < 256; i+=2)
-                speck_decrypt(k, &(page.p32[i]), &(page.p32[i+1]));
+                speck_decrypt(k, &(page.p32[i]));
             p &= 0x7F;
         }
         if(p == 127){
