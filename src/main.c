@@ -7,8 +7,8 @@
 
 #define BAUDRATE 115200
 #define RS485 1
-
 #define IWDG_RELOAD_SEC 1
+
 #define IWDG_RELOAD (156.25 * IWDG_RELOAD_SEC)
 #define IWDG_START          0xCCCC
 #define IWDG_WRITE_ACCESS   0x5555
@@ -27,7 +27,7 @@ union{
 uint32_t l[29];
 uint32_t key[27];
 
-// Очистка сектора(1КБ) - 14 слов
+// Очистка сектора(1КБ)
 __STATIC_FORCEINLINE
 void flashSectorClear(uint32_t adr){
     FLASH->CR = FLASH_CR_PER;
@@ -36,7 +36,7 @@ void flashSectorClear(uint32_t adr){
     while ((FLASH->SR & FLASH_SR_BSY) != 0);
 }
 
-// Запись 2 байт данных(связанно с организацией flash) по адресу - 10 слов
+// Запись 2 байт данных(связанно с организацией flash) по адресу
 __STATIC_FORCEINLINE
 void flashWrite(uint32_t adr, uint16_t data){
     FLASH->CR = FLASH_CR_PG;
@@ -44,7 +44,7 @@ void flashWrite(uint32_t adr, uint16_t data){
     while ((FLASH->SR & FLASH_SR_BSY) != 0);
 }
 
-// Чтение данных из UART1 - 26 слов
+// Чтение данных из UART1
 uint16_t uartRead(void){
     for(int i = 0; i < 0x8000; i++){
         if(USART1->ISR & USART_ISR_RXNE){
@@ -55,13 +55,13 @@ uint16_t uartRead(void){
     return 0x100;
 }
 
-// Запись данных в UART1 - 10 слов
+// Запись данных в UART1
 void uartWrite(uint8_t d){
     while(!(USART1->ISR & USART_ISR_TXE));
     USART1->TDR = d;
 }
 
-// Расшифровка алгоритмом Speck_64_128 - 20 слов
+// Расшифровка алгоритмом Speck_64_128
 void speck_decrypt(uint32_t k[], uint32_t p[2]){
     uint32_t x = p[0];
     uint32_t y = p[1];
@@ -76,7 +76,7 @@ void speck_decrypt(uint32_t k[], uint32_t p[2]){
     p[1] = y;
 }
 
-// Чтение страницы из UART1 - 26 слов
+// Чтение страницы из UART1
 __STATIC_FORCEINLINE
 uint16_t uartPageRead(void){
     uint16_t crc = 211;
@@ -90,7 +90,7 @@ uint16_t uartPageRead(void){
     return crc & 0xFF;
 }
 
-// Самообновление загрузчика - 46 слов + 8 слов вызов
+// Самообновление загрузчика
 __attribute__ ((section(".RamFunc"))) __NO_RETURN
 void bootloaderSelfUpdate(void){
     USART1->TDR = 0xAA;
@@ -106,7 +106,7 @@ void bootloaderSelfUpdate(void){
     __builtin_unreachable();
 }
 
-// Переход в приложение - 58 слов
+// Переход в приложение
 __STATIC_FORCEINLINE __NO_RETURN
 void goApp(){
     FLASH->SR = FLASH_SR_EOP;
