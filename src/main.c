@@ -8,6 +8,8 @@
 #define BAUDRATE 115200
 #define RS485 1
 
+#define IWDG_RELOAD_SEC 1
+#define IWDG_RELOAD (156.25 * IWDG_RELOAD_SEC)
 #define IWDG_START          0xCCCC
 #define IWDG_WRITE_ACCESS   0x5555
 #define IWDG_REFRESH        0xAAAA
@@ -42,10 +44,13 @@ void flashWrite(uint32_t adr, uint16_t data){
     while ((FLASH->SR & FLASH_SR_BSY) != 0);
 }
 
-// Чтение данных из UART1 - 18 слов
+// Чтение данных из UART1 - 26 слов
 uint16_t uartRead(void){
-    for(int i = 0; i < 0x1000; i++){
-        if(USART1->ISR & USART_ISR_RXNE) return USART1->RDR;
+    for(int i = 0; i < 0x8000; i++){
+        if(USART1->ISR & USART_ISR_RXNE){
+            IWDG->KR = IWDG_REFRESH;
+            return USART1->RDR;
+        }
     }
     return 0x100;
 }
@@ -85,12 +90,13 @@ uint16_t uartPageRead(void){
     return crc & 0xFF;
 }
 
-// Самообновление загрузчика - 50 слов + 8 слов вызов
+// Самообновление загрузчика - 46 слов + 8 слов вызов
 __attribute__ ((section(".RamFunc"))) __NO_RETURN
 void bootloaderSelfUpdate(void){
+    USART1->TDR = 0xAA;
+    FLASH->CR = FLASH_CR_MER;
     FLASH->CR = FLASH_CR_MER | FLASH_CR_STRT;
     while ((FLASH->SR & FLASH_SR_BSY) != 0);
-    USART1->TDR = 0xAA;
     for(int i = 0; i < 512; i++){
         FLASH->CR = FLASH_CR_PG;
         *(__IO uint16_t*)(FLASH_BASE + i * 2) = page.p16[i];
@@ -150,9 +156,8 @@ int main(){
 
     IWDG->KR = IWDG_START;
     IWDG->KR = IWDG_WRITE_ACCESS;
-    IWDG->PR = IWDG_PR_PR_2;
-    IWDG->RLR = 625 - 1;
-    IWDG->KR = IWDG_REFRESH;
+    IWDG->PR = IWDG_PR_PR_Msk;
+    IWDG->RLR = IWDG_RELOAD;
 
     FLASH->KEYR = FLASH_KEY1;
     FLASH->KEYR = FLASH_KEY2;
@@ -171,9 +176,7 @@ int main(){
     uartWrite(0xDE);
     uartWrite(0xAD);
 
-    for(int count = 0; count < 10; count++){
-        IWDG->KR = IWDG_REFRESH;
-
+    for(int count = 0; count < 3; count++){
         uint16_t c = uartRead();
         if(c != 0xDE) continue;
 
