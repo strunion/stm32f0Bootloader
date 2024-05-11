@@ -88,9 +88,7 @@ uint16_t uartPageRead(void){
 // Самообновление загрузчика - 50 слов + 8 слов вызов
 __attribute__ ((section(".RamFunc"))) __NO_RETURN
 void bootloaderSelfUpdate(void){
-    FLASH->CR = FLASH_CR_PER;
-    FLASH->AR = FLASH_BASE;
-    FLASH->CR = FLASH_CR_PER | FLASH_CR_STRT;
+    FLASH->CR = FLASH_CR_MER | FLASH_CR_STRT;
     while ((FLASH->SR & FLASH_SR_BSY) != 0);
     USART1->TDR = 0xAA;
     for(int i = 0; i < 512; i++){
@@ -136,14 +134,14 @@ int main(){
     RCC->APB2ENR = RCC_APB2ENR_USART1EN;
 
     #if RS485 == 1
-        GPIOA->MODER = GPIO_MODER_MODER12_1 | GPIO_MODER_MODER10_1 | GPIO_MODER_MODER9_1;
+        GPIOA->MODER |= GPIO_MODER_MODER12_1 | GPIO_MODER_MODER10_1 | GPIO_MODER_MODER9_1;
         GPIOA->AFR[1] = 0x00010110;
 
         USART1->BRR = F_CPU / BAUDRATE;
         USART1->CR3 = USART_CR3_DEM;
         USART1->CR1 = USART_CR1_DEAT_Msk | USART_CR1_DEDT_Msk | USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
     #else
-        GPIOA->MODER = GPIO_MODER_MODER10_1 | GPIO_MODER_MODER9_1;
+        GPIOA->MODER |= GPIO_MODER_MODER10_1 | GPIO_MODER_MODER9_1;
         GPIOA->AFR[1] = 0x00000110;
 
         USART1->BRR = F_CPU / BAUDRATE;

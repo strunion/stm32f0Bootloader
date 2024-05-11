@@ -9,7 +9,7 @@
   },
   "debug": {
     "openocd_target": "stm32f0x",
-    "svd_path": "STM32F0xx.svd"
+    "svd_path": "STM32F030.svd"
   },
   "frameworks": [
     "cmsis"
