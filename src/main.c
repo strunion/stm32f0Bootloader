@@ -146,7 +146,7 @@ void goApp(){
     RCC->APB2RSTR = 0;
     RCC->AHBRSTR = 0;
     RCC->AHBENR = 0x00000014;
-    RCC->APB2ENR = 0;
+    RCC->APB2ENR = RCC_APB2ENR_SYSCFGEN;
 
     for (int i = 0; i < 48; i++)
         vec[i] = app[i];
