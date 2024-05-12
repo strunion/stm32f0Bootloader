@@ -1,18 +1,42 @@
 #include "stm32f0xx.h"
 
-#define KEY1 0x1b1a1918
-#define KEY2 0x13121110
-#define KEY3 0x0b0a0908
-#define KEY4 0x03020100
+#ifndef KEY1
+    #define KEY1 0x1b1a1918
+#endif
 
-#define BAUDRATE 115200
-#define RS485 1
-#define IWDG_RELOAD_SEC 1
+#ifndef KEY2
+    #define KEY2 0x13121110
+#endif
+
+#ifndef KEY3
+    #define KEY3 0x0b0a0908
+#endif
+
+#ifndef KEY4
+    #define KEY4 0x03020100
+#endif
+
+#ifndef CRYPTO
+    #define CRYPTO 1
+#endif
+
+#ifndef BAUDRATE
+    #define BAUDRATE 115200
+#endif
+
+#ifndef RS485
+    #define RS485 1
+#endif
+
+#ifndef IWDG_RELOAD_SEC
+    #define IWDG_RELOAD_SEC 1
+#endif
 
 #define IWDG_RELOAD (156.25 * IWDG_RELOAD_SEC)
 #define IWDG_START          0xCCCC
 #define IWDG_WRITE_ACCESS   0x5555
 #define IWDG_REFRESH        0xAAAA
+
 #define APPLICATION_ADDRESS 0x08000400
 
 #define app ((volatile uint32_t *)(APPLICATION_ADDRESS))
@@ -24,8 +48,10 @@ union{
     uint32_t p32[256];
 } page;
 
-uint32_t l[29];
-uint32_t key[27];
+#if CRYPTO == 1
+    uint32_t l[29];
+    uint32_t key[27];
+#endif
 
 // Очистка сектора(1КБ)
 __STATIC_FORCEINLINE
@@ -61,20 +87,22 @@ void uartWrite(uint8_t d){
     USART1->TDR = d;
 }
 
-// Расшифровка алгоритмом Speck_64_128
-void speck_decrypt(uint32_t k[], uint32_t p[2]){
-    uint32_t x = p[0];
-    uint32_t y = p[1];
-    for (int i = 26; i >= 0; i--) {
-        y ^= x;
-        y = y>>3 | y<<29;
-        x ^= k[i];
-        x -= y;
-        x = x<<8 | x>>24;
+#if CRYPTO == 1
+    // Расшифровка алгоритмом Speck_64_128
+    void speck_decrypt(uint32_t k[], uint32_t p[2]){
+        uint32_t x = p[0];
+        uint32_t y = p[1];
+        for (int i = 26; i >= 0; i--) {
+            y ^= x;
+            y = y>>3 | y<<29;
+            x ^= k[i];
+            x -= y;
+            x = x<<8 | x>>24;
+        }
+        p[0] = x;
+        p[1] = y;
     }
-    p[0] = x;
-    p[1] = y;
-}
+#endif
 
 // Чтение страницы из UART1
 __STATIC_FORCEINLINE
@@ -94,8 +122,9 @@ uint16_t uartPageRead(void){
 __attribute__ ((section(".RamFunc"))) __NO_RETURN
 void bootloaderSelfUpdate(void){
     USART1->TDR = 0xAA;
-    FLASH->CR = FLASH_CR_MER;
-    FLASH->CR = FLASH_CR_MER | FLASH_CR_STRT;
+    FLASH->CR = FLASH_CR_PER;
+    FLASH->AR = FLASH_BASE;
+    FLASH->CR = FLASH_CR_PER | FLASH_CR_STRT;
     while ((FLASH->SR & FLASH_SR_BSY) != 0);
     for(int i = 0; i < 512; i++){
         FLASH->CR = FLASH_CR_PG;
@@ -162,14 +191,16 @@ int main(){
     FLASH->KEYR = FLASH_KEY1;
     FLASH->KEYR = FLASH_KEY2;
 
-    l[2] = KEY1;
-    l[1] = KEY2;
-    l[0] = KEY3;
-    key[0] = KEY4;
-    for (int i = 0; i < 26; i++) {
-        l[i+3] = (key[i] + (l[i]>>8 | l[i]<<24)) ^ i;
-        key[i+1] = (key[i]<<3 | key[i]>>29) ^ l[i+3];
-    }
+    #if CRYPTO == 1
+        l[2] = KEY1;
+        l[1] = KEY2;
+        l[0] = KEY3;
+        key[0] = KEY4;
+        for (int i = 0; i < 26; i++) {
+            l[i+3] = (key[i] + (l[i]>>8 | l[i]<<24)) ^ i;
+            key[i+1] = (key[i]<<3 | key[i]>>29) ^ l[i+3];
+        }
+    #endif
 
     uartWrite(0xFE);
     uartWrite(0xE1);
@@ -195,18 +226,17 @@ int main(){
         if(c != 0xEF) continue;
 
         uint32_t pageCtx = uartRead();
-        if((pageCtx == 0x100 || !(pageCtx & 0x7F) || (pageCtx & 0x7F) >= PAGES) && ((pageCtx & 0x7F) != 127)) continue;
+        if((pageCtx == 0x100 || !(pageCtx) || (pageCtx) >= PAGES) && (pageCtx != 127)) continue;
 
         uint16_t crc = uartRead();
         if(crc == 0x100) continue;
 
         if(uartPageRead() != crc) continue;
 
-        if(pageCtx & 0x80){
+        #if CRYPTO == 1
             for(int i = 0; i < 256; i+=2)
                 speck_decrypt(key, &(page.p32[i]));
-            pageCtx &= 0x7F;
-        }
+        #endif
 
         if(pageCtx == 127){
             bootloaderSelfUpdate();
