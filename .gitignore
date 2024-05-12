@@ -12,4 +12,5 @@ asm.txt
 
 #files and folders we do not want to ignore
 !.gitignore
+!.gitmodules
 !.github
