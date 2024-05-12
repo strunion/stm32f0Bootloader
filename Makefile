@@ -1,18 +1,45 @@
-CC=arm-gcc-none-eabi
+# Compiler and flags
+CC = arm-none-eabi-gcc
+CFLAGS = -Wall -Wextra -Os -nostartfiles -mcpu=cortex-m0 -mfloat-abi=soft
+SRCDIRS = ./src
+INCDIRS = ./include ./cmsis_device_f0/include ./CMSIS_5/CMSIS/Core/Include
+DEFS += STM32F030x6 STM32F0 F_CPU=8000000 PAGES=16
 
-INCUDES += cmsis_device_f0/include/
-INCUDES += system/
 
-LDSCRIPT = stm32f0.ld
+#LD flags
+LDFLAGS = -T./system/boot16.ld
 
-CFLAGS += -mcpu=cortex-m0 $(addprefix -I, $(INCUDES)) -O0 -g -Wall -Werror -std=c99
+# Define flags
+DEFINES = $(addprefix -D,$(DEFS))
 
-all: main.bin
+# Include flags
+INCLUDES = $(addprefix -I,$(INCDIRS))
 
-main.bin: main.elf
-	$(CC)-objcopy -O binary $< $@
+# Source files
+SOURCES = $(foreach dir,$(SRCDIRS),$(wildcard $(dir)/*.c))
 
-main.elf: main.o startup.o system_stm32f0xx.o
+# Object files
+OBJECTS = $(SOURCES:.c=.o)
+OBJECTS += startup_boot.o
+
+# Output file
+TARGET = bootloader.bin
+TARGET_ELF = bootloader.elf
+
+# Rules
+all: $(TARGET)
+
+$(TARGET): $(TARGET_ELF)
+	arm-none-eabi-objcopy -O binary $< $@
+
+$(TARGET_ELF): $(OBJECTS)
+	$(CC) $(CFLAGS) $(INCLUDES) $(DEFINES) $(LDFLAGS) $^ -o $@
+
+startup_boot.o: ./system/startup_boot.s
+	$(CC) $(CFLAGS) $(INCLUDES) $(DEFINES) -c $< -o $@
+
+%.o: %.c
+	$(CC) $(CFLAGS) $(INCLUDES) $(DEFINES) -c $< -o $@
 
 clean:
-	rm -f *.o *.elf *.bin
+	rm -f $(OBJECTS) $(TARGET) $(TARGET_ELF)

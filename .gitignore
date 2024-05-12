@@ -8,7 +8,8 @@
 data/*
 data
 *.o
-asm.txt
+*.elf
+*.bin
 
 #files and folders we do not want to ignore
 !.gitignore
