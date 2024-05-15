@@ -2,7 +2,7 @@
 CC = arm-none-eabi-gcc
 CFLAGS = -Wall -Wextra -Os -nostartfiles -mcpu=cortex-m0 -mfloat-abi=soft
 SRCDIRS = ./src
-INCDIRS = ./include ./cmsis_device_f0/include ./CMSIS_5/CMSIS/Core/Include
+INCDIRS = ./include ./system/CMSIS
 DEFS += STM32F030x6 STM32F0 F_CPU=8000000 PAGES=16
 
 

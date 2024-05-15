@@ -1,6 +1,6 @@
 #exclude every file with no extension
 *
-!/**/
+!*/
 !*.*
 
 #exclude . dirs and files
