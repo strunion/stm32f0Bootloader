@@ -1,5 +1,9 @@
 #include "stm32f0xx.h"
 
+#ifndef CRYPTO
+    #define CRYPTO 1
+#endif
+
 #ifndef KEY1
     #define KEY1 0x1b1a1918
 #endif
@@ -16,29 +20,72 @@
     #define KEY4 0x03020100
 #endif
 
-#ifndef CRYPTO
-    #define CRYPTO 1
-#endif
-
 #ifndef BAUDRATE
     #define BAUDRATE 115200
 #endif
 
 #ifndef RS485
-    #define RS485 1
+    #define RS485 0
 #endif
 
-#ifndef IWDG_RELOAD_SEC
-    #define IWDG_RELOAD_SEC 1
+#ifndef IWDG_ENABLE
+    #define IWDG_ENABLE 1
 #endif
 
-#define IWDG_RELOAD (156.25 * IWDG_RELOAD_SEC)
-#define IWDG_START          0xCCCC
-#define IWDG_WRITE_ACCESS   0x5555
-#define IWDG_REFRESH        0xAAAA
+#if IWDG_ENABLE == 1
+    #ifndef IWDG_RELOAD_SEC
+        #define IWDG_RELOAD_SEC 2
+    #endif
+    #define IWDG_RELOAD (156.25 * IWDG_RELOAD_SEC)
+    #define IWDG_START          0xCCCC
+    #define IWDG_WRITE_ACCESS   0x5555
+    #define IWDG_REFRESH        0xAAAA
+
+    __STATIC_FORCEINLINE
+    void iwdgInti(void){
+        IWDG->KR = IWDG_START;
+        IWDG->KR = IWDG_WRITE_ACCESS;
+        IWDG->PR = IWDG_PR_PR_Msk;
+        IWDG->RLR = IWDG_RELOAD;
+    }
+
+    __attribute__((noinline))
+    void iwdgRefresh(void) {
+        IWDG->KR = IWDG_REFRESH;
+    }
+#endif
+
+#if CRYPTO == 1
+    uint32_t l[29];
+    uint32_t key[27];
+
+    void speckInit_64_128(void){
+        l[2] = KEY1;
+        l[1] = KEY2;
+        l[0] = KEY3;
+        key[0] = KEY4;
+        for (int i = 0; i < 26; i++) {
+            l[i+3] = (key[i] + (l[i]>>8 | l[i]<<24)) ^ i;
+            key[i+1] = (key[i]<<3 | key[i]>>29) ^ l[i+3];
+        }
+    }
+
+    void speckDecrypt_64_128(uint32_t p[2]){
+        uint32_t x = p[0];
+        uint32_t y = p[1];
+        for (int i = 26; i >= 0; i--) {
+            y ^= x;
+            y = y>>3 | y<<29;
+            x ^= key[i];
+            x -= y;
+            x = x<<8 | x>>24;
+        }
+        p[0] = x;
+        p[1] = y;
+    }
+#endif
 
 #define APPLICATION_ADDRESS 0x08000400
-
 #define app ((volatile uint32_t *)(APPLICATION_ADDRESS))
 #define vec ((volatile uint32_t *)(SRAM_BASE))
 
@@ -48,37 +95,39 @@ union{
     uint32_t p32[256];
 } page;
 
-#if CRYPTO == 1
-    uint32_t l[29];
-    uint32_t key[27];
-#endif
-
-// Очистка сектора(1КБ)
 __STATIC_FORCEINLINE
-void flashSectorClear(uint32_t adr){
+void flashWritePage(uint32_t adr, const uint16_t* data) {
     FLASH->CR = FLASH_CR_PER;
     FLASH->AR = adr;
     FLASH->CR = FLASH_CR_PER | FLASH_CR_STRT;
     while ((FLASH->SR & FLASH_SR_BSY) != 0);
+
+    for(uint32_t i = 0; i < 512; i++) {
+        FLASH->CR = FLASH_CR_PG;
+        *(__IO uint16_t*)(adr + i * 2) = data[i];
+        while ((FLASH->SR & FLASH_SR_BSY) != 0);
+    }
 }
 
-// Запись 2 байт данных(связанно с организацией flash) по адресу
-__STATIC_FORCEINLINE
-void flashWrite(uint32_t adr, uint16_t data){
-    FLASH->CR = FLASH_CR_PG;
-    *(__IO uint16_t*)(adr) = data;
-    while ((FLASH->SR & FLASH_SR_BSY) != 0);
+// Самообновление загрузчика
+__attribute__ ((section(".RamFunc"))) __NO_RETURN
+void bootloaderSelfUpdate(void){
+    USART1->TDR = 0xAA;
+    flashWritePage(FLASH_BASE, page.p16);
+    SCB->AIRCR  = ((0x5FAUL << SCB_AIRCR_VECTKEY_Pos) | SCB_AIRCR_SYSRESETREQ_Msk);
+    __builtin_unreachable();
 }
 
 // Чтение данных из UART1
-uint16_t uartRead(void){
-    for(int i = 0; i < 0x8000; i++){
-        if(USART1->ISR & USART_ISR_RXNE){
-            IWDG->KR = IWDG_REFRESH;
-            return USART1->RDR;
-        }
+int uartRead(void){
+    int i = 0;
+    while(!(USART1->ISR & USART_ISR_RXNE)){
+        if(i++ > 0x20000) return -1;    // ~212ms
     }
-    return 0x100;
+    #if IWDG_ENABLE == 1
+        iwdgRefresh();
+    #endif
+    return USART1->RDR;
 }
 
 // Запись данных в UART1
@@ -87,30 +136,13 @@ void uartWrite(uint8_t d){
     USART1->TDR = d;
 }
 
-#if CRYPTO == 1
-    // Расшифровка алгоритмом Speck_64_128
-    void speck_decrypt(uint32_t k[], uint32_t p[2]){
-        uint32_t x = p[0];
-        uint32_t y = p[1];
-        for (int i = 26; i >= 0; i--) {
-            y ^= x;
-            y = y>>3 | y<<29;
-            x ^= k[i];
-            x -= y;
-            x = x<<8 | x>>24;
-        }
-        p[0] = x;
-        p[1] = y;
-    }
-#endif
-
 // Чтение страницы из UART1
 __STATIC_FORCEINLINE
-uint16_t uartPageRead(void){
+int uartPageRead(void){
     uint16_t crc = 211;
     for(int i = 0; i < 1024; i++){
-        uint16_t c = uartRead();
-        if(c == 0x100) return 0x100;
+        int c = uartRead();
+        if(c == -1) return -1;
         page.p[i] = c;
         crc += c * 211;
         crc ^= crc>>8;
@@ -118,22 +150,13 @@ uint16_t uartPageRead(void){
     return crc & 0xFF;
 }
 
-// Самообновление загрузчика
-__attribute__ ((section(".RamFunc"))) __NO_RETURN
-void bootloaderSelfUpdate(void){
-    USART1->TDR = 0xAA;
-    FLASH->CR = FLASH_CR_PER;
-    FLASH->AR = FLASH_BASE;
-    FLASH->CR = FLASH_CR_PER | FLASH_CR_STRT;
-    while ((FLASH->SR & FLASH_SR_BSY) != 0);
-    for(int i = 0; i < 512; i++){
-        FLASH->CR = FLASH_CR_PG;
-        *(__IO uint16_t*)(FLASH_BASE + i * 2) = page.p16[i];
-        while ((FLASH->SR & FLASH_SR_BSY) != 0);
+#if IWDG_ENABLE == 0
+    __NO_RETURN
+    void hardFault(void){
+        SCB->AIRCR  = ((0x5FAUL << SCB_AIRCR_VECTKEY_Pos) | SCB_AIRCR_SYSRESETREQ_Msk);
+        __builtin_unreachable();
     }
-    SCB->AIRCR  = ((0x5FAUL << SCB_AIRCR_VECTKEY_Pos) | SCB_AIRCR_SYSRESETREQ_Msk);
-    __builtin_unreachable();
-}
+#endif
 
 // Переход в приложение
 __STATIC_FORCEINLINE __NO_RETURN
@@ -151,9 +174,15 @@ void goApp(){
     for (int i = 0; i < 48; i++)
         vec[i] = app[i];
 
+    #if IWDG_ENABLE == 0
+        vec[3] = (uint32_t)hardFault;
+    #endif
+
     SYSCFG->CFGR1 = SYSCFG_CFGR1_MEM_MODE;
 
-    IWDG->KR = IWDG_REFRESH;
+    #if IWDG_ENABLE == 1
+        iwdgRefresh();
+    #endif
 
     asm volatile(
         "msr msp, %[sp]   \n\t"
@@ -164,10 +193,14 @@ void goApp(){
     __builtin_unreachable();
 }
 
-int main(){
+__STATIC_FORCEINLINE
+void rccInit(void){
     RCC->AHBENR = RCC_AHBENR_GPIOAEN;
     RCC->APB2ENR = RCC_APB2ENR_USART1EN;
+}
 
+__STATIC_FORCEINLINE
+void perefInit(void){
     #if RS485 == 1
         GPIOA->MODER |= GPIO_MODER_MODER12_1 | GPIO_MODER_MODER10_1 | GPIO_MODER_MODER9_1;
         GPIOA->AFR[1] = 0x00010110;
@@ -179,76 +212,81 @@ int main(){
         GPIOA->MODER |= GPIO_MODER_MODER10_1 | GPIO_MODER_MODER9_1;
         GPIOA->AFR[1] = 0x00000110;
 
+        // GPIOA->MODER |= GPIO_MODER_MODER3_1 | GPIO_MODER_MODER2_1;
+        // GPIOA->AFR[0] = 0x00001100;
+
         USART1->BRR = F_CPU / BAUDRATE;
         USART1->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
     #endif
+}
 
-    IWDG->KR = IWDG_START;
-    IWDG->KR = IWDG_WRITE_ACCESS;
-    IWDG->PR = IWDG_PR_PR_Msk;
-    IWDG->RLR = IWDG_RELOAD;
-
-    FLASH->KEYR = FLASH_KEY1;
-    FLASH->KEYR = FLASH_KEY2;
-
-    #if CRYPTO == 1
-        l[2] = KEY1;
-        l[1] = KEY2;
-        l[0] = KEY3;
-        key[0] = KEY4;
-        for (int i = 0; i < 26; i++) {
-            l[i+3] = (key[i] + (l[i]>>8 | l[i]<<24)) ^ i;
-            key[i+1] = (key[i]<<3 | key[i]>>29) ^ l[i+3];
-        }
-    #endif
-
+__STATIC_FORCEINLINE
+void sendHello(void){
     uartWrite(0xFE);
     uartWrite(0xE1);
     uartWrite(0xDE);
     uartWrite(0xAD);
+}
 
-    for(int count = 0; count < 3; count++){
-        uint16_t c = uartRead();
-        if(c != 0xDE) continue;
+__STATIC_FORCEINLINE
+void getFirmware(void){
+    while(1){
+        int c = uartRead();
+        if(c != 0xDE) return;
 
         c = uartRead();
-        if(c != 0xAD) continue;
+        if(c != 0xAD) return;
 
         c = uartRead();
         if(c == 0x00){
             const char* str = "Zerg17 Bootloader v1.0\r\n";
             while(*str) uartWrite(*str++);
-            continue;
+            return;
         }
-        if(c != 0xBE) continue;
+        if(c != 0xBE) return;
 
         c = uartRead();
-        if(c != 0xEF) continue;
+        if(c != 0xEF) return;
 
         uint32_t pageCtx = uartRead();
-        if((pageCtx == 0x100 || !(pageCtx) || (pageCtx) >= PAGES) && (pageCtx != 127)) continue;
+        if(pageCtx == -1) return;
 
-        uint16_t crc = uartRead();
-        if(crc == 0x100) continue;
+        int crc = uartRead();
+        if(crc == -1) return;
 
-        if(uartPageRead() != crc) continue;
+        if(uartPageRead() != crc) return;
 
         #if CRYPTO == 1
             for(int i = 0; i < 256; i+=2)
-                speck_decrypt(key, &(page.p32[i]));
+                speckDecrypt_64_128(&(page.p32[i]));
         #endif
 
-        if(pageCtx == 127){
-            bootloaderSelfUpdate();
-        }else{
-            flashSectorClear(FLASH_BASE + pageCtx * 1024);
-            for(uint32_t i = 0; i < 512; i++)
-                flashWrite(FLASH_BASE + pageCtx * 1024 + i * 2, page.p16[i]);
-        }
+        FLASH->KEYR = FLASH_KEY1;
+        FLASH->KEYR = FLASH_KEY2;
 
-        count = 0;
+        if(pageCtx == 127 && page.p32[0] == ((volatile uint32_t *)(FLASH_BASE))[0]){
+            bootloaderSelfUpdate();
+        }else if(pageCtx && pageCtx < PAGES){
+            flashWritePage(FLASH_BASE + pageCtx * 1024, page.p16);
+        }else return;
+
         uartWrite(0xAA); // Отправка ACK
     }
+}
 
+int main(){
+    rccInit();
+    perefInit();
+
+    #if IWDG_ENABLE == 1
+        iwdgInti();
+    #endif
+
+    #if CRYPTO == 1
+        speckInit_64_128();
+    #endif
+
+    sendHello();
+    getFirmware();
     goApp();
 }
