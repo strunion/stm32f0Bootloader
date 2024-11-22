@@ -1,0 +1,3 @@
+[submodule "su_f0_common"]
+	path = su_f0_common
+	url = https://github.com/strunion/su_f0_common.git
