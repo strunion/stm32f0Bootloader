@@ -1,5 +1,9 @@
 #include "stm32f0xx.h"
 
+#ifndef PAGES
+    #define PAGES 16
+#endif
+
 #ifndef CRYPTO
     #define CRYPTO 1
 #endif
@@ -22,6 +26,22 @@
 
 #ifndef BAUDRATE
     #define BAUDRATE 115200
+#endif
+
+#ifndef USART
+    #define USART 1
+#endif
+
+#if USART == 1
+    #define UART USART1
+    #define UART_RCC_EN RCC->APB2ENR = RCC_APB2ENR_USART1EN
+    #define UART_RCC_RES RCC->APB2RSTR = RCC_APB2RSTR_USART1RST;
+#endif
+
+#if USART == 2
+    #define UART USART2
+    #define UART_RCC_EN RCC->APB1ENR = RCC_APB1ENR_USART2EN
+    #define UART_RCC_RES RCC->APB1RSTR = RCC_APB1RSTR_USART2RST;
 #endif
 
 #ifndef RS485
@@ -112,31 +132,31 @@ void flashWritePage(uint32_t adr, const uint16_t* data) {
 // Самообновление загрузчика
 __attribute__ ((section(".RamFunc"))) __NO_RETURN
 void bootloaderSelfUpdate(void){
-    USART1->TDR = 0xAA;
+    UART->TDR = 0xAA;
     flashWritePage(FLASH_BASE, page.p16);
     SCB->AIRCR  = ((0x5FAUL << SCB_AIRCR_VECTKEY_Pos) | SCB_AIRCR_SYSRESETREQ_Msk);
     __builtin_unreachable();
 }
 
-// Чтение данных из UART1
+// Чтение данных из UART
 int uartRead(void){
     int i = 0;
-    while(!(USART1->ISR & USART_ISR_RXNE)){
+    while(!(UART->ISR & USART_ISR_RXNE)){
         if(i++ > 0x20000) return -1;    // ~212ms
     }
     #if IWDG_ENABLE == 1
         iwdgRefresh();
     #endif
-    return USART1->RDR;
+    return UART->RDR;
 }
 
-// Запись данных в UART1
+// Запись данных в UART
 void uartWrite(uint8_t d){
-    while(!(USART1->ISR & USART_ISR_TXE));
-    USART1->TDR = d;
+    while(!(UART->ISR & USART_ISR_TXE));
+    UART->TDR = d;
 }
 
-// Чтение страницы из UART1
+// Чтение страницы из UART
 __STATIC_FORCEINLINE
 int uartPageRead(void){
     uint16_t crc = 211;
@@ -164,8 +184,9 @@ void goApp(){
     FLASH->SR = FLASH_SR_EOP;
     FLASH->CR = FLASH_CR_LOCK;
 
-    RCC->APB2RSTR = RCC_APB2RSTR_USART1RST;
+    UART_RCC_RES;
     RCC->AHBRSTR = RCC_AHBRSTR_GPIOARST;
+    RCC->APB1RSTR = 0;
     RCC->APB2RSTR = 0;
     RCC->AHBRSTR = 0;
     RCC->AHBENR = 0x00000014;
@@ -196,7 +217,7 @@ void goApp(){
 __STATIC_FORCEINLINE
 void rccInit(void){
     RCC->AHBENR = RCC_AHBENR_GPIOAEN;
-    RCC->APB2ENR = RCC_APB2ENR_USART1EN;
+    UART_RCC_EN;
 }
 
 __STATIC_FORCEINLINE
@@ -205,18 +226,18 @@ void perefInit(void){
         GPIOA->MODER |= GPIO_MODER_MODER12_1 | GPIO_MODER_MODER10_1 | GPIO_MODER_MODER9_1;
         GPIOA->AFR[1] = 0x00010110;
 
-        USART1->BRR = F_CPU / BAUDRATE;
-        USART1->CR3 = USART_CR3_DEM;
-        USART1->CR1 = USART_CR1_DEAT_Msk | USART_CR1_DEDT_Msk | USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
+        UART->BRR = F_CPU / BAUDRATE;
+        UART->CR3 = USART_CR3_DEM;
+        UART->CR1 = USART_CR1_DEAT_Msk | USART_CR1_DEDT_Msk | USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
     #else
-        GPIOA->MODER |= GPIO_MODER_MODER10_1 | GPIO_MODER_MODER9_1;
-        GPIOA->AFR[1] = 0x00000110;
+        // GPIOA->MODER |= GPIO_MODER_MODER10_1 | GPIO_MODER_MODER9_1;
+        // GPIOA->AFR[1] = 0x00000110;
 
-        // GPIOA->MODER |= GPIO_MODER_MODER3_1 | GPIO_MODER_MODER2_1;
-        // GPIOA->AFR[0] = 0x00001100;
+        GPIOA->MODER |= GPIO_MODER_MODER3_1 | GPIO_MODER_MODER2_1;
+        GPIOA->AFR[0] = 0x00001100;
 
-        USART1->BRR = F_CPU / BAUDRATE;
-        USART1->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
+        UART->BRR = F_CPU / BAUDRATE;
+        UART->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
     #endif
 }
 

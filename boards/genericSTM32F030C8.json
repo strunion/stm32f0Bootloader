@@ -1,0 +1,29 @@
+{
+  "build": {
+    "core": "stm32",
+    "cpu": "cortex-m0",
+    "extra_flags": "-DSTM32F030x8 -DSTM32F0",
+    "f_cpu": "8000000L",
+    "mcu": "stm32f030c8",
+    "product_line": "STM32F030x8"
+  },
+  "debug": {
+    "openocd_target": "stm32f0x",
+    "svd_path": "STM32F0xx.svd"
+  },
+  "frameworks": [
+    "cmsis"
+  ],
+  "name": "STM32F030C8 (8k RAM. 64k Flash)",
+  "upload": {
+    "maximum_ram_size": 8192,
+    "maximum_size": 65536,
+    "protocol": "stlink",
+    "protocols": [
+      "stlink",
+      "serial"
+    ]
+  },
+  "url": "https://www.st.com/en/microcontrollers-microprocessors/stm32f030c8.html",
+  "vendor": "Generic"
+}
